@@ -27,7 +27,10 @@ import {
 } from 'lucide-react';
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  // Manejo de sesión persistente localmente
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return localStorage.getItem('fr_session_active') === 'true';
+  });
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
@@ -37,22 +40,46 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('inicio');
   const [notif, setNotif] = useState(null);
   const [cart, setCart] = useState([]);
-  const [ventasDiaTotal, setVentasDiaTotal] = useState(0);
-  const [facturasHoy, setFacturasHoy] = useState(0);
   const [clienteNombre, setClienteNombre] = useState('Cliente de Mostrador');
   const [metodoPago, setMetodoPago] = useState('Efectivo');
 
-  const [cajaAbierta, setCajaAbierta] = useState(false);
+  // Estado de caja persistente (NO se reinicia al salir o recargar)
+  const [cajaAbierta, setCajaAbierta] = useState(() => {
+    return localStorage.getItem('fr_caja_abierta') === 'true';
+  });
   const [fondoInicialInput, setFondoInicialInput] = useState('3000');
-  const [fondoCajaActual, setFondoCajaActual] = useState(3000);
-  const [fechaApertura, setFechaApertura] = useState('');
-  const [ventasEfectivo, setVentasEfectivo] = useState(0);
-  const [ventasTarjeta, setVentasTarjeta] = useState(0);
+  const [fondoCajaActual, setFondoCajaActual] = useState(() => {
+    return parseFloat(localStorage.getItem('fr_caja_fondo')) || 3000;
+  });
+  const [fechaApertura, setFechaApertura] = useState(() => {
+    return localStorage.getItem('fr_caja_fecha_apertura') || '';
+  });
+  const [ventasEfectivo, setVentasEfectivo] = useState(() => {
+    return parseFloat(localStorage.getItem('fr_caja_v_efectivo')) || 0;
+  });
+  const [ventasTarjeta, setVentasTarjeta] = useState(() => {
+    return parseFloat(localStorage.getItem('fr_caja_v_tarjeta')) || 0;
+  });
+  const [facturasHoy, setFacturasHoy] = useState(() => {
+    return parseInt(localStorage.getItem('fr_caja_facturas')) || 0;
+  });
   const [historialCierres, setHistorialCierres] = useState([]);
+
+  // Sincronizar estado de caja en localStorage
+  useEffect(() => {
+    localStorage.setItem('fr_caja_abierta', cajaAbierta);
+    localStorage.setItem('fr_caja_fondo', fondoCajaActual);
+    localStorage.setItem('fr_caja_fecha_apertura', fechaApertura);
+    localStorage.setItem('fr_caja_v_efectivo', ventasEfectivo);
+    localStorage.setItem('fr_caja_v_tarjeta', ventasTarjeta);
+    localStorage.setItem('fr_caja_facturas', facturasHoy);
+  }, [cajaAbierta, fondoCajaActual, fechaApertura, ventasEfectivo, ventasTarjeta, facturasHoy]);
 
   useEffect(() => {
     cargarDatosDesdeNube();
   }, []);
+
+  const ventasDiaTotal = ventasEfectivo + ventasTarjeta;
 
   const cargarDatosDesdeNube = async () => {
     try {
@@ -102,7 +129,7 @@ export default function App() {
         setHistorialCierres(cierresAdaptados);
       }
     } catch (error) {
-      console.error('Error al conectar con Supabase:', error);
+      console.error('Error de sincronización:', error);
     }
   };
 
@@ -120,15 +147,17 @@ export default function App() {
       loginPassword === 'Admin123'
     ) {
       setIsAuthenticated(true);
+      localStorage.setItem('fr_session_active', 'true');
       setLoginError('');
-      triggerAlerta('Sesión iniciada');
+      triggerAlerta('Bienvenido al Sistema');
     } else {
-      setLoginError('Correo o contraseña incorrectos.');
+      setLoginError('Credenciales incorrectas. Verifique correo y contraseña.');
     }
   };
 
   const handleLogout = () => {
     setIsAuthenticated(false);
+    localStorage.removeItem('fr_session_active');
     setLoginPassword('');
     setActiveTab('inicio');
     setCart([]);
@@ -163,11 +192,11 @@ export default function App() {
       salidas_hoy: nuevasSalidas
     }).eq('codigo', codigo);
 
-    await registrarMovimientoNube(item.codigo, item.nombre, 'Salida', 'Ajuste Manual', cantidad);
+    await registrarMovimientoNube(item.codigo, item.nombre, 'Salida', 'Ajuste Manual de Inventario', cantidad);
 
     setProductos(prev => prev.map(p => p.codigo === codigo ? { ...p, existencia: nuevaExistencia, salidasHoy: nuevasSalidas } : p));
     if (nuevaExistencia <= item.ptoReorden) {
-      triggerAlerta(`Punto de Reorden: ${item.nombre}`);
+      triggerAlerta(`Alerta: ${item.nombre} ha alcanzado su Punto de Reorden`);
     }
   };
 
@@ -181,10 +210,10 @@ export default function App() {
       existencia: nuevaExistencia
     }).eq('codigo', codigo);
 
-    await registrarMovimientoNube(item.codigo, item.nombre, 'Entrada', 'Reabastecimiento Pedido', cantidad);
+    await registrarMovimientoNube(item.codigo, item.nombre, 'Entrada', 'Reabastecimiento de Proveedor', cantidad);
 
     setProductos(prev => prev.map(p => p.codigo === codigo ? { ...p, existencia: nuevaExistencia } : p));
-    triggerAlerta('Entrada de mercancía registrada');
+    triggerAlerta('Entrada de mercancía registrada exitosamente');
   };
 
   const resetearDemo = async () => {
@@ -193,22 +222,32 @@ export default function App() {
     await supabase.from('cierres_caja').delete().neq('id', '');
     
     setCart([]);
-    setVentasDiaTotal(0);
     setVentasEfectivo(0);
     setVentasTarjeta(0);
     setFacturasHoy(0);
     setCajaAbierta(false);
+    localStorage.removeItem('fr_caja_abierta');
+    localStorage.removeItem('fr_caja_fondo');
+    localStorage.removeItem('fr_caja_fecha_apertura');
+    localStorage.removeItem('fr_caja_v_efectivo');
+    localStorage.removeItem('fr_caja_v_tarjeta');
+    localStorage.removeItem('fr_caja_facturas');
+
     cargarDatosDesdeNube();
-    triggerAlerta('Base de datos restablecida a 0');
+    triggerAlerta('Datos de prueba reiniciados correctamente');
   };
 
   const abrirCaja = (e) => {
     e.preventDefault();
     const monto = parseFloat(fondoInicialInput) || 0;
+    const fecha = new Date().toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' });
     setFondoCajaActual(monto);
-    setFechaApertura(new Date().toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' }));
+    setFechaApertura(fecha);
+    setVentasEfectivo(0);
+    setVentasTarjeta(0);
+    setFacturasHoy(0);
     setCajaAbierta(true);
-    triggerAlerta(`Caja abierta con fondo de RD$ ${monto.toLocaleString('es-DO', { minimumFractionDigits: 2 })}`);
+    triggerAlerta(`Turno de caja iniciado con fondo de RD$ ${monto.toLocaleString('es-DO', { minimumFractionDigits: 2 })}`);
   };
 
   const imprimirCierrePDF = (cierre) => {
@@ -371,29 +410,36 @@ export default function App() {
     setHistorialCierres(prev => [cierreAdaptado, ...prev]);
     imprimirCierrePDF(cierreAdaptado);
 
+    // Cierre manual completado: ahora sí se restablece la caja
     setCajaAbierta(false);
-    setVentasDiaTotal(0);
     setVentasEfectivo(0);
     setVentasTarjeta(0);
     setFacturasHoy(0);
     setFondoInicialInput('3000');
-    triggerAlerta('Turno cerrado y guardado en la nube.');
+    localStorage.removeItem('fr_caja_abierta');
+    localStorage.removeItem('fr_caja_fondo');
+    localStorage.removeItem('fr_caja_fecha_apertura');
+    localStorage.removeItem('fr_caja_v_efectivo');
+    localStorage.removeItem('fr_caja_v_tarjeta');
+    localStorage.removeItem('fr_caja_facturas');
+
+    triggerAlerta('Turno de caja cerrado con éxito.');
   };
 
   const agregarAlCarrito = (producto) => {
     if (!cajaAbierta) {
-      triggerAlerta('Debe abrir caja antes de registrar ventas.');
+      triggerAlerta('Debe abrir el turno de caja antes de realizar ventas.');
       return;
     }
     if (producto.existencia <= 0) {
-      triggerAlerta(`Sin existencias de ${producto.nombre}`);
+      triggerAlerta(`Existencias agotadas para ${producto.nombre}`);
       return;
     }
     setCart(prev => {
       const existe = prev.find(item => item.codigo === producto.codigo);
       if (existe) {
         if (existe.cantidad >= producto.existencia) {
-          triggerAlerta(`Existencia máxima alcanzada para ${producto.nombre}`);
+          triggerAlerta(`Stock máximo alcanzado para ${producto.nombre}`);
           return prev;
         }
         return prev.map(item => 
@@ -535,7 +581,7 @@ export default function App() {
 
   const procesarVenta = async () => {
     if (!cajaAbierta) {
-      triggerAlerta('Debe abrir caja antes de facturar.');
+      triggerAlerta('Debe abrir la caja antes de registrar ventas.');
       return;
     }
     if (cart.length === 0) return;
@@ -575,7 +621,6 @@ export default function App() {
       total: totalCart
     };
 
-    setVentasDiaTotal(prev => prev + totalCart);
     if (metodoPago === 'Efectivo') {
       setVentasEfectivo(prev => prev + totalCart);
     } else {
@@ -588,7 +633,7 @@ export default function App() {
     setCart([]);
     setClienteNombre('Cliente de Mostrador');
     cargarDatosDesdeNube();
-    triggerAlerta(`Factura ${numFactura} emitida y sincronizada.`);
+    triggerAlerta(`Factura ${numFactura} registrada satisfactoriamente.`);
   };
 
   if (!isAuthenticated) {
@@ -606,8 +651,8 @@ export default function App() {
             <h1 className="text-xl font-black text-white tracking-tight">
               FERRETERÍA <span className="text-orange-500">RAMOS</span>
             </h1>
-            <p className="text-xs text-slate-400 mt-1 uppercase tracking-wider font-bold">
-              Base de Datos Cloud • PostgreSQL
+            <p className="text-xs text-orange-400 mt-1 uppercase tracking-wider font-bold">
+              Bienvenido al Sistema de Gestión
             </p>
           </div>
 
@@ -629,7 +674,7 @@ export default function App() {
                   type="email"
                   value={loginEmail}
                   onChange={(e) => setLoginEmail(e.target.value)}
-                  placeholder="Ferreteriaramos@gmail.com"
+                  placeholder="ferreteriaramos@gmail.com"
                   required
                   className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-orange-500 transition"
                 />
@@ -657,7 +702,7 @@ export default function App() {
               type="submit"
               className="w-full bg-orange-600 hover:bg-orange-700 text-white font-extrabold py-3 px-4 rounded-xl text-xs uppercase tracking-wider shadow-lg shadow-orange-600/30 transition flex items-center justify-center gap-2"
             >
-              Iniciar Sesión
+              Acceder al Panel
             </button>
           </form>
         </div>
@@ -668,8 +713,8 @@ export default function App() {
   return (
     <div className="flex min-h-screen bg-slate-100 text-slate-800 font-sans">
       {notif && (
-        <div className="fixed top-5 right-5 z-50 bg-amber-600 text-white px-5 py-3.5 rounded-xl shadow-2xl flex items-center gap-3 border-l-4 border-amber-900 transition-all">
-          <AlertTriangle className="w-5 h-5 flex-shrink-0 animate-bounce" />
+        <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white px-5 py-3.5 rounded-xl shadow-2xl flex items-center gap-3 border-l-4 border-orange-500 transition-all">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0 text-orange-400" />
           <span className="text-xs font-bold tracking-wide">{notif}</span>
         </div>
       )}
@@ -751,7 +796,7 @@ export default function App() {
               <nav className="space-y-2">
                 <button 
                   onClick={() => setActiveTab('inicio')}
-                  className={`w-full flex items-center justify-between px-3.5 py-2.5 text-xs rounded-lg font-medium transition text-slate-300 hover:bg-slate-800`}
+                  className="w-full flex items-center justify-between px-3.5 py-2.5 text-xs rounded-lg font-medium transition text-slate-300 hover:bg-slate-800"
                 >
                   <div className="flex items-center gap-3">
                     <AlertTriangle className="w-4 h-4 text-amber-400" /> Punto de Reorden
@@ -772,7 +817,7 @@ export default function App() {
             onClick={resetearDemo}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs text-slate-400 hover:text-white bg-slate-800/80 hover:bg-slate-800 rounded-lg transition font-medium border border-slate-700/60"
           >
-            <RotateCcw className="w-3.5 h-3.5" /> Restablecer BD en Nube
+            <RotateCcw className="w-3.5 h-3.5" /> Restablecer Demostración
           </button>
           <button 
             onClick={handleLogout}
@@ -790,10 +835,10 @@ export default function App() {
               Ferretería Ramos • La Romana
             </span>
             <h2 className="text-base font-extrabold text-slate-800 tracking-tight mt-0.5">
-              {activeTab === 'inicio' && 'Panel de Reorden e Inventario'}
-              {activeTab === 'pos' && 'Punto de Venta / Facturación'}
-              {activeTab === 'caja' && 'Cierre de Caja'}
-              {activeTab === 'movimientos' && 'Historial de Movimientos de Almacén'}
+              {activeTab === 'inicio' && 'Panel de Control de Inventario & Reorden'}
+              {activeTab === 'pos' && 'Punto de Venta / Facturación de Mostrador'}
+              {activeTab === 'caja' && 'Gestión y Conciliación de Turnos de Caja'}
+              {activeTab === 'movimientos' && 'Kárdex / Historial de Movimientos'}
             </h2>
           </div>
           <div className="flex items-center gap-4">
@@ -804,7 +849,7 @@ export default function App() {
               </div>
               <div>
                 <p className="text-xs font-bold text-slate-800 leading-none">Admin Ramos</p>
-                <p className="text-[10px] text-emerald-600 font-semibold leading-none mt-1">● Conectado a PostgreSQL</p>
+                <p className="text-[10px] text-emerald-600 font-semibold leading-none mt-1">● Sistema en Línea</p>
               </div>
             </div>
           </div>
@@ -814,17 +859,17 @@ export default function App() {
           <div className="p-8 space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:border-orange-200 transition">
-                <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Ventas Registradas Hoy</p>
+                <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Ventas Acumuladas</p>
                 <h3 className="text-2xl font-black text-slate-900 mt-1">RD$ {ventasDiaTotal.toLocaleString('es-DO', { minimumFractionDigits: 2 })}</h3>
                 <p className="text-[11px] text-emerald-600 mt-2 font-medium flex items-center gap-1">
-                  <TrendingUp className="w-3.5 h-3.5" /> Total facturado en el día
+                  <TrendingUp className="w-3.5 h-3.5" /> Total facturado en el turno
                 </p>
               </div>
 
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:border-orange-200 transition">
-                <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Facturas Procesadas</p>
+                <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Facturas Emitidas</p>
                 <h3 className="text-2xl font-black text-slate-900 mt-1">{facturasHoy}</h3>
-                <p className="text-[11px] text-slate-500 mt-2 font-medium">Despachos completados</p>
+                <p className="text-[11px] text-slate-500 mt-2 font-medium">Transacciones procesadas</p>
               </div>
 
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:border-orange-200 transition">
@@ -847,11 +892,11 @@ export default function App() {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2 mb-4">
                   <div>
                     <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                      <Boxes className="w-4 h-4 text-orange-600" /> Demanda y Salidas de Almacén (En Vivo)
+                      <Boxes className="w-4 h-4 text-orange-600" /> Monitoreo de Existencias & Demanda
                     </h4>
                   </div>
                   <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full self-start">
-                    PostgreSQL Cloud
+                    Sincronización en Tiempo Real
                   </span>
                 </div>
 
@@ -872,7 +917,7 @@ export default function App() {
                               <span className="font-bold text-xs text-slate-900">{item.nombre}</span>
                             </div>
                             <span className="text-[11px] text-slate-500 mt-0.5 block">
-                              Salidas hoy: <strong className="text-slate-800">{item.salidasHoy}</strong> unidades | Existencia actual: <strong className={requiereCompra ? 'text-orange-600 font-extrabold' : 'text-slate-800'}>{item.existencia}</strong>
+                              Salidas registradas: <strong className="text-slate-800">{item.salidasHoy}</strong> unidades | Existencia disponible: <strong className={requiereCompra ? 'text-orange-600 font-extrabold' : 'text-slate-800'}>{item.existencia}</strong>
                             </span>
                           </div>
 
@@ -904,7 +949,7 @@ export default function App() {
                           ></div>
                         </div>
                         <div className="flex justify-between text-[10px] text-slate-400 mt-1">
-                          <span>Rotación de demanda: {tasaSalida}%</span>
+                          <span>Índice de rotación: {tasaSalida}%</span>
                           <span>Punto Reorden: {item.ptoReorden}</span>
                         </div>
                       </div>
@@ -916,15 +961,15 @@ export default function App() {
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
                 <div>
                   <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
-                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Top Ventas por Monto (Hoy)</h4>
-                    <span className="text-[10px] text-orange-600 font-bold bg-orange-50 px-2 py-0.5 rounded">Ferretería</span>
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Top Ventas por Monto</h4>
+                    <span className="text-[10px] text-orange-600 font-bold bg-orange-50 px-2 py-0.5 rounded">Ferretería Ramos</span>
                   </div>
                   <div className="space-y-3.5">
                     {ventasDiaTotal === 0 ? (
                       <div className="text-center py-12 text-slate-400">
                         <Package className="w-8 h-8 mx-auto opacity-30 mb-2" />
-                        <p className="text-xs">Sin ventas registradas hoy</p>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Aparecerán automáticamente al facturar</p>
+                        <p className="text-xs">Sin ventas registradas en el turno actual</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Se computarán automáticamente al emitir facturas</p>
                       </div>
                     ) : (
                       [...productos]
@@ -937,7 +982,7 @@ export default function App() {
                               <span className="text-orange-500 font-black text-sm">{idx + 1}</span>
                               <div>
                                 <p className="font-bold text-slate-800">{item.nombre}</p>
-                                <p className="text-[10px] text-slate-400">{item.salidasHoy} despachados</p>
+                                <p className="text-[10px] text-slate-400">{item.salidasHoy} unidades despachadas</p>
                               </div>
                             </div>
                             <span className="font-bold text-slate-700">
@@ -950,8 +995,8 @@ export default function App() {
                 </div>
 
                 <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mt-4 text-[11px] text-slate-600">
-                  <span className="font-bold text-slate-800 block mb-0.5">Base de Datos Conectada:</span>
-                  Cualquier venta o pedido actualiza de inmediato las tablas de inventario en Supabase.
+                  <span className="font-bold text-slate-800 block mb-0.5">Control Centralizado:</span>
+                  Toda salida por mostrador o reabastecimiento actualiza automáticamente las existencias disponibles y el kárdex general.
                 </div>
               </div>
             </div>
@@ -963,7 +1008,7 @@ export default function App() {
                     Punto de Reorden & Control de Existencias
                   </h4>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Fórmula operativa: Dispara alerta automática cuando <code className="text-orange-600 font-semibold">Existencia ≤ Punto de Reorden</code>
+                    Cálculo preventivo: Dispara notificación automática cuando <code className="text-orange-600 font-semibold">Existencia ≤ Punto de Reorden</code>
                   </p>
                 </div>
                 <div>
@@ -982,10 +1027,10 @@ export default function App() {
                     <tr>
                       <th className="py-3.5 px-4">Cód.</th>
                       <th className="py-3.5 px-4">Material / Producto</th>
-                      <th className="py-3.5 px-4 text-center">Nivel de Stock (En vivo)</th>
+                      <th className="py-3.5 px-4 text-center">Nivel de Stock</th>
                       <th className="py-3.5 px-4 text-center">Pto. Reorden</th>
                       <th className="py-3.5 px-4">Lote Sugerido</th>
-                      <th className="py-3.5 px-4 text-center">Simular en Sustentación</th>
+                      <th className="py-3.5 px-4 text-center">Acciones Operativas</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -1026,17 +1071,17 @@ export default function App() {
                             <div className="flex items-center justify-center gap-2">
                               <button 
                                 onClick={() => descontarStock(prod.codigo, 5)}
-                                title="Simular salida de material"
+                                title="Descontar stock"
                                 className="px-2.5 py-1.5 bg-white border border-slate-300 hover:border-orange-500 hover:text-orange-600 text-slate-700 rounded-lg font-bold flex items-center gap-1 transition shadow-sm"
                               >
-                                <MinusCircle className="w-3.5 h-3.5 text-orange-500" /> Venta (-5)
+                                <MinusCircle className="w-3.5 h-3.5 text-orange-500" /> Salida (-5)
                               </button>
                               <button 
                                 onClick={() => reabastecerStock(prod.codigo, 25)}
-                                title="Registrar reabastecimiento"
+                                title="Ingresar stock de reposición"
                                 className="px-2.5 py-1.5 bg-slate-900 hover:bg-orange-600 text-white rounded-lg font-bold flex items-center gap-1 transition shadow-sm"
                               >
-                                <PlusCircle className="w-3.5 h-3.5 text-amber-400" /> Pedido (+25)
+                                <PlusCircle className="w-3.5 h-3.5 text-amber-400" /> Entrada (+25)
                               </button>
                             </div>
                           </td>
@@ -1056,7 +1101,7 @@ export default function App() {
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">Catálogo de Materiales</h3>
-                  <p className="text-xs text-slate-500">Selecciona materiales para agregar a la factura</p>
+                  <p className="text-xs text-slate-500">Selecciona los productos para generar la orden de venta</p>
                 </div>
                 <button 
                   onClick={() => setActiveTab('inicio')}
@@ -1070,13 +1115,13 @@ export default function App() {
                 <div className="bg-amber-50 border border-amber-300 text-amber-800 p-4 rounded-xl flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2 font-bold">
                     <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-                    <span>La caja se encuentra CERRADA. Debe abrir turno para poder facturar.</span>
+                    <span>La caja está actualmente CERRADA. Debe iniciar un turno para poder procesar cobros.</span>
                   </div>
                   <button 
                     onClick={() => setActiveTab('caja')}
                     className="bg-amber-600 hover:bg-amber-700 text-white font-extrabold px-3 py-1.5 rounded-lg transition"
                   >
-                    Ir a Abrir Caja
+                    Abrir Turno
                   </button>
                 </div>
               )}
@@ -1184,7 +1229,7 @@ export default function App() {
                   <div className="text-center py-8 text-slate-400">
                     <ShoppingCart className="w-10 h-10 mx-auto stroke-[1.5] mb-2 opacity-40" />
                     <p className="text-xs font-medium">Factura vacía</p>
-                    <p className="text-[11px] mt-1 text-slate-400">Selecciona materiales para generar la orden</p>
+                    <p className="text-[11px] mt-1 text-slate-400">Agregue materiales desde el catálogo</p>
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-56 overflow-y-auto pr-1 divide-y divide-slate-100">
@@ -1237,7 +1282,7 @@ export default function App() {
                     <span className="font-semibold text-slate-800">RD$ {itbis.toLocaleString('es-DO', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between text-base font-black text-slate-900 border-t border-slate-100 pt-2">
-                    <span>Total Factura:</span>
+                    <span>Total a Pagar:</span>
                     <span className="text-orange-600">RD$ {totalCart.toLocaleString('es-DO', { minimumFractionDigits: 2 })}</span>
                   </div>
 
@@ -1259,7 +1304,7 @@ export default function App() {
             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
                 <h3 className="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
-                  <Calculator className="w-5 h-5 text-orange-600" /> Cierre de Caja
+                  <Calculator className="w-5 h-5 text-orange-600" /> Control y Liquidación de Caja
                 </h3>
               </div>
               <div>
@@ -1268,7 +1313,7 @@ export default function App() {
                     ? 'bg-emerald-50 text-emerald-700 border-emerald-300' 
                     : 'bg-rose-50 text-rose-700 border-rose-300'
                 }`}>
-                  Estado: {cajaAbierta ? 'CAJA ABIERTA (TURNO ACTIVO)' : 'CAJA CERRADA'}
+                  Estado: {cajaAbierta ? 'TURNO ACTIVO' : 'TURNO CERRADO'}
                 </span>
               </div>
             </div>
@@ -1276,12 +1321,12 @@ export default function App() {
             {!cajaAbierta ? (
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 max-w-xl">
                 <h4 className="text-sm font-black text-slate-900 uppercase tracking-wider mb-4 border-b border-slate-100 pb-2 flex items-center gap-2">
-                  <Banknote className="w-4 h-4 text-orange-600" /> Apertura de Turno
+                  <Banknote className="w-4 h-4 text-orange-600" /> Apertura de Turno Operativo
                 </h4>
                 <form onSubmit={abrirCaja} className="space-y-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase mb-1.5">
-                      Monto Inicial de Apertura (RD$)
+                      Fondo Inicial de Caja (RD$)
                     </label>
                     <div className="relative">
                       <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">RD$</span>
@@ -1328,7 +1373,7 @@ export default function App() {
                     type="submit"
                     className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 px-4 rounded-xl text-xs uppercase tracking-wider transition shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2"
                   >
-                    <CheckCircle2 className="w-4 h-4" /> Abrir Caja y Habilitar Facturación
+                    <CheckCircle2 className="w-4 h-4" /> Abrir Turno y Habilitar Facturación
                   </button>
                 </form>
               </div>
@@ -1351,7 +1396,7 @@ export default function App() {
                   </div>
 
                   <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Ventas en Tarjeta</p>
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Ventas con Tarjeta</p>
                     <h4 className="text-xl font-black text-blue-600 mt-1">
                       RD$ {ventasTarjeta.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
                     </h4>
@@ -1362,13 +1407,13 @@ export default function App() {
                     <h4 className="text-xl font-black text-slate-900 mt-1">
                       RD$ {ventasDiaTotal.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
                     </h4>
-                    <span className="text-[10px] text-slate-500 block mt-1">{facturasHoy} facturas emitidas</span>
+                    <span className="text-[10px] text-slate-500 block mt-1">{facturasHoy} comprobantes emitidos</span>
                   </div>
                 </div>
 
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
                   <h4 className="text-sm font-black text-slate-900 uppercase tracking-wider mb-4 border-b border-slate-100 pb-2">
-                    Liquidación del Turno Activo
+                    Liquidación del Turno en Curso
                   </h4>
                   <div className="max-w-md space-y-2.5 text-xs">
                     <div className="flex justify-between py-1.5 border-b border-slate-100">
@@ -1384,7 +1429,7 @@ export default function App() {
                       <span className="font-bold text-blue-600">RD$ {ventasTarjeta.toLocaleString('es-DO', { minimumFractionDigits: 2 })}</span>
                     </div>
                     <div className="flex justify-between py-2 border-t-2 border-slate-900 text-sm font-black">
-                      <span className="text-slate-900">Efectivo Físico a Entregar (Fondo + Ventas):</span>
+                      <span className="text-slate-900">Efectivo Físico a Entregar (Fondo + Efectivo):</span>
                       <span className="text-orange-600">RD$ {(fondoCajaActual + ventasEfectivo).toLocaleString('es-DO', { minimumFractionDigits: 2 })}</span>
                     </div>
                   </div>
@@ -1400,7 +1445,7 @@ export default function App() {
                       onClick={() => setActiveTab('pos')}
                       className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-4 py-3 rounded-xl transition"
                     >
-                      Ir al POS a Facturar
+                      Continuar Facturando
                     </button>
                   </div>
                 </div>
@@ -1410,7 +1455,7 @@ export default function App() {
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mt-8">
               <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                 <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                  Historial de Cierres de Caja Anteriores (En Nube)
+                  Histórico de Turnos y Liquidaciones
                 </h4>
                 <span className="text-xs font-bold text-slate-500 bg-white border border-slate-200 px-2.5 py-1 rounded-lg">
                   {historialCierres.length} Cierres Registrados
@@ -1471,7 +1516,7 @@ export default function App() {
             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
                 <h3 className="text-base font-black text-slate-900 tracking-tight flex items-center gap-2">
-                  <ArrowLeftRight className="w-5 h-5 text-orange-600" /> Registro de Entradas y Salidas
+                  <ArrowLeftRight className="w-5 h-5 text-orange-600" /> Registro de Entradas y Salidas (Kárdex)
                 </h3>
               </div>
               <div className="flex items-center gap-3">
@@ -1482,7 +1527,7 @@ export default function App() {
                   onClick={() => setActiveTab('inicio')}
                   className="text-xs font-bold text-orange-600 hover:text-orange-700 border border-orange-200 bg-orange-50 px-3 py-1.5 rounded-lg transition"
                 >
-                  Ir a Inventario
+                  Ir al Inventario
                 </button>
               </div>
             </div>
@@ -1505,7 +1550,7 @@ export default function App() {
                     {movimientos.length === 0 ? (
                       <tr>
                         <td colSpan="7" className="text-center py-8 text-slate-400">
-                          No hay movimientos registrados en la base de datos.
+                          No hay movimientos registrados.
                         </td>
                       </tr>
                     ) : (
