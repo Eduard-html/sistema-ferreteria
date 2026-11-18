@@ -9,7 +9,6 @@ import {
   TrendingUp, 
   PlusCircle, 
   MinusCircle, 
-  RotateCcw, 
   Receipt, 
   Trash2, 
   Lock, 
@@ -26,8 +25,40 @@ import {
   Calendar
 } from 'lucide-react';
 
+// Funciones matemáticas integradas
+const evaluarEstadoInventario = (existencia, ptoReorden, stockSeguridad) => {
+  const stock = Number(existencia) || 0;
+  const rop = Number(ptoReorden) || 0;
+  const ss = Number(stockSeguridad) || 0;
+
+  if (stock <= ss) {
+    return {
+      estado: 'Crítico (Bajo Seguridad)',
+      badgeClass: 'bg-rose-100 text-rose-800 border border-rose-300 font-bold'
+    };
+  }
+  if (stock <= rop) {
+    return {
+      estado: 'Punto de Reorden',
+      badgeClass: 'bg-amber-100 text-amber-800 border border-amber-300 font-semibold'
+    };
+  }
+  return {
+    estado: 'Normal',
+    badgeClass: 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+  };
+};
+
+const calcularParametrosReorden = (consumoDiario, leadTimeDias, diasSeguridad = 2) => {
+  const d = Number(consumoDiario) || 0;
+  const L = Number(leadTimeDias) || 1;
+  const stockSeguridad = Math.round(d * Number(diasSeguridad));
+  const puntoReorden = Math.round((d * L) + stockSeguridad);
+  return { stockSeguridad, puntoReorden };
+};
+
 export default function App() {
-  // Manejo de sesión persistente localmente
+  // Autenticación local
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     return localStorage.getItem('fr_session_active') === 'true';
   });
@@ -35,15 +66,34 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
+  // Estados principales
   const [productos, setProductos] = useState([]);
   const [movimientos, setMovimientos] = useState([]);
-  const [activeTab, setActiveTab] = useState('inicio');
+  const [activeTab, setActiveTab] = useState('inicio'); // inicio | productos | pos | caja | reorden | movimientos
   const [notif, setNotif] = useState(null);
+  const [busquedaProd, setBusquedaProd] = useState('');
+
+  // Modal Crear / Editar Producto
+  const [modalProductoOpen, setModalProductoOpen] = useState(false);
+  const [modoEdicion, setModoEdicion] = useState(false);
+  const [formProd, setFormProd] = useState({
+    codigo: '',
+    nombre: '',
+    existencia: 0,
+    precio: 0,
+    lote: '50 Unidades',
+    consumoDiario: 5,
+    leadTimeDias: 3,
+    stockSeguridad: 10,
+    ptoReorden: 25
+  });
+
+  // Carrito POS
   const [cart, setCart] = useState([]);
   const [clienteNombre, setClienteNombre] = useState('Cliente de Mostrador');
   const [metodoPago, setMetodoPago] = useState('Efectivo');
 
-  // Estado de caja persistente (NO se reinicia al salir o recargar)
+  // Estado de caja persistente
   const [cajaAbierta, setCajaAbierta] = useState(() => {
     return localStorage.getItem('fr_caja_abierta') === 'true';
   });
@@ -65,7 +115,6 @@ export default function App() {
   });
   const [historialCierres, setHistorialCierres] = useState([]);
 
-  // Sincronizar estado de caja en localStorage
   useEffect(() => {
     localStorage.setItem('fr_caja_abierta', cajaAbierta);
     localStorage.setItem('fr_caja_fondo', fondoCajaActual);
@@ -94,7 +143,10 @@ export default function App() {
           nombre: p.nombre,
           existencia: p.existencia,
           ptoReorden: p.pto_reorden,
-          lote: p.lote,
+          stockSeguridad: p.stock_seguridad ?? 10,
+          leadTimeDias: p.lead_time_dias ?? 3,
+          consumoDiario: parseFloat(p.consumo_diario) || 1,
+          lote: p.lote || '50 Unidades',
           precio: parseFloat(p.precio),
           salidasHoy: p.salidas_hoy || 0
         }));
@@ -134,6 +186,7 @@ export default function App() {
   };
 
   const productosEnAlerta = productos.filter(p => p.existencia <= p.ptoReorden);
+  const productosEnCritico = productos.filter(p => p.existencia <= p.stockSeguridad);
 
   const triggerAlerta = (mensaje) => {
     setNotif(mensaje);
@@ -149,7 +202,7 @@ export default function App() {
       setIsAuthenticated(true);
       localStorage.setItem('fr_session_active', 'true');
       setLoginError('');
-      triggerAlerta('Bienvenido al Sistema');
+      triggerAlerta('Bienvenido al Sistema de Gestión');
     } else {
       setLoginError('Credenciales incorrectas. Verifique correo y contraseña.');
     }
@@ -180,6 +233,108 @@ export default function App() {
     }
   };
 
+  // --- CRUD GESTIÓN DE PRODUCTOS ---
+  const abrirModalNuevoProducto = () => {
+    const { stockSeguridad, puntoReorden } = calcularParametrosReorden(5, 3);
+    setFormProd({
+      codigo: '',
+      nombre: '',
+      existencia: 0,
+      precio: 0,
+      lote: '50 Unidades',
+      consumoDiario: 5,
+      leadTimeDias: 3,
+      stockSeguridad,
+      ptoReorden: puntoReorden
+    });
+    setModoEdicion(false);
+    setModalProductoOpen(true);
+  };
+
+  const abrirModalEditarProducto = (prod) => {
+    setFormProd({
+      codigo: prod.codigo,
+      nombre: prod.nombre,
+      existencia: prod.existencia,
+      precio: prod.precio,
+      lote: prod.lote,
+      consumoDiario: prod.consumoDiario,
+      leadTimeDias: prod.leadTimeDias,
+      stockSeguridad: prod.stockSeguridad,
+      ptoReorden: prod.ptoReorden
+    });
+    setModoEdicion(true);
+    setModalProductoOpen(true);
+  };
+
+  const handleParametroReordenChange = (campo, valor) => {
+    const nuevoConsumo = campo === 'consumoDiario' ? Number(valor) : Number(formProd.consumoDiario);
+    const nuevoLeadTime = campo === 'leadTimeDias' ? Number(valor) : Number(formProd.leadTimeDias);
+    const { stockSeguridad, puntoReorden } = calcularParametrosReorden(nuevoConsumo, nuevoLeadTime);
+
+    setFormProd(prev => ({
+      ...prev,
+      [campo]: valor,
+      stockSeguridad,
+      ptoReorden: puntoReorden
+    }));
+  };
+
+  const guardarProductoNube = async (e) => {
+    e.preventDefault();
+    const codigoLimpio = formProd.codigo.trim().toUpperCase();
+    if (!codigoLimpio || !formProd.nombre.trim()) return;
+
+    const payload = {
+      codigo: codigoLimpio,
+      nombre: formProd.nombre.trim(),
+      existencia: Number(formProd.existencia) || 0,
+      precio: Number(formProd.precio) || 0,
+      lote: formProd.lote.trim() || '50 Unidades',
+      consumo_diario: Number(formProd.consumoDiario) || 1,
+      lead_time_dias: Number(formProd.leadTimeDias) || 1,
+      stock_seguridad: Number(formProd.stockSeguridad) || 0,
+      pto_reorden: Number(formProd.ptoReorden) || 0
+    };
+
+    if (modoEdicion) {
+      const { error } = await supabase
+        .from('productos')
+        .update(payload)
+        .eq('codigo', codigoLimpio);
+
+      if (!error) {
+        await registrarMovimientoNube(codigoLimpio, payload.nombre, 'Entrada', 'Actualización de ficha técnica / parámetros ROP', 0);
+        triggerAlerta(`Material ${codigoLimpio} actualizado correctamente.`);
+      }
+    } else {
+      const { error } = await supabase
+        .from('productos')
+        .insert([{ ...payload, salidas_hoy: 0 }]);
+
+      if (!error) {
+        if (payload.existencia > 0) {
+          await registrarMovimientoNube(codigoLimpio, payload.nombre, 'Entrada', 'Inventario Inicial de Catálogo', payload.existencia);
+        }
+        triggerAlerta(`Material ${codigoLimpio} registrado en el catálogo.`);
+      } else {
+        triggerAlerta('Error: Verifique que el código de producto no esté duplicado.');
+        return;
+      }
+    }
+
+    setModalProductoOpen(false);
+    cargarDatosDesdeNube();
+  };
+
+  const eliminarProductoNube = async (codigo, nombre) => {
+    if (!window.confirm(`¿Desea eliminar permanentemente "${nombre}" (${codigo}) del catálogo?`)) return;
+    await supabase.from('productos').delete().eq('codigo', codigo);
+    cargarDatosDesdeNube();
+    triggerAlerta(`Producto ${codigo} eliminado.`);
+  };
+
+  // --- MOVIMIENTOS RÁPIDOS DE STOCK ---
   const descontarStock = async (codigo, cantidad = 1) => {
     const item = productos.find(p => p.codigo === codigo);
     if (!item) return;
@@ -195,12 +350,15 @@ export default function App() {
     await registrarMovimientoNube(item.codigo, item.nombre, 'Salida', 'Ajuste Manual de Inventario', cantidad);
 
     setProductos(prev => prev.map(p => p.codigo === codigo ? { ...p, existencia: nuevaExistencia, salidasHoy: nuevasSalidas } : p));
-    if (nuevaExistencia <= item.ptoReorden) {
-      triggerAlerta(`Alerta: ${item.nombre} ha alcanzado su Punto de Reorden`);
+    
+    if (nuevaExistencia <= item.stockSeguridad) {
+      triggerAlerta(`Alerta Crítica: ${item.nombre} por debajo del Stock de Seguridad`);
+    } else if (nuevaExistencia <= item.ptoReorden) {
+      triggerAlerta(`Alerta: ${item.nombre} alcanzó su Punto de Reorden`);
     }
   };
 
-  const reabastecerStock = async (codigo, cantidad = 20) => {
+  const reabastecerStock = async (codigo, cantidad = 25) => {
     const item = productos.find(p => p.codigo === codigo);
     if (!item) return;
 
@@ -213,30 +371,10 @@ export default function App() {
     await registrarMovimientoNube(item.codigo, item.nombre, 'Entrada', 'Reabastecimiento de Proveedor', cantidad);
 
     setProductos(prev => prev.map(p => p.codigo === codigo ? { ...p, existencia: nuevaExistencia } : p));
-    triggerAlerta('Entrada de mercancía registrada exitosamente');
+    triggerAlerta(`Entrada de +${cantidad} unidades registrada en ${item.nombre}`);
   };
 
-  const resetearDemo = async () => {
-    await supabase.from('productos').update({ salidas_hoy: 0 }).neq('codigo', '');
-    await supabase.from('movimientos').delete().neq('id', 0);
-    await supabase.from('cierres_caja').delete().neq('id', '');
-    
-    setCart([]);
-    setVentasEfectivo(0);
-    setVentasTarjeta(0);
-    setFacturasHoy(0);
-    setCajaAbierta(false);
-    localStorage.removeItem('fr_caja_abierta');
-    localStorage.removeItem('fr_caja_fondo');
-    localStorage.removeItem('fr_caja_fecha_apertura');
-    localStorage.removeItem('fr_caja_v_efectivo');
-    localStorage.removeItem('fr_caja_v_tarjeta');
-    localStorage.removeItem('fr_caja_facturas');
-
-    cargarDatosDesdeNube();
-    triggerAlerta('Datos de prueba reiniciados correctamente');
-  };
-
+  // --- CAJA Y FACTURACIÓN ---
   const abrirCaja = (e) => {
     e.preventDefault();
     const monto = parseFloat(fondoInicialInput) || 0;
@@ -284,7 +422,6 @@ export default function App() {
               <p style="margin: 2px 0 0 0; font-size: 11px; color: #64748b; font-weight: bold;">MATERIALES DE CONSTRUCCIÓN & HERRAMIENTAS</p>
               <p style="margin: 4px 0 2px 0; font-size: 11px;"><strong>RNC:</strong> 132-45892-1</p>
               <p style="margin: 2px 0; font-size: 11px;"><strong>Dirección:</strong> La Romana, sector El Tamarindo, No. 43, Rep. Dom.</p>
-              <p style="margin: 2px 0; font-size: 11px;"><strong>Teléfono:</strong> +1 (849) 632-2741</p>
             </td>
             <td style="vertical-align: top; width: 35%; border: none;">
               <div class="info-box">
@@ -410,7 +547,6 @@ export default function App() {
     setHistorialCierres(prev => [cierreAdaptado, ...prev]);
     imprimirCierrePDF(cierreAdaptado);
 
-    // Cierre manual completado: ahora sí se restablece la caja
     setCajaAbierta(false);
     setVentasEfectivo(0);
     setVentasTarjeta(0);
@@ -470,7 +606,6 @@ export default function App() {
 
   const imprimirFacturaPDF = (facturaData) => {
     const ventanaImpresion = window.open('', '_blank', 'width=850,height=750');
-    
     const itemsFilas = facturaData.items.map(item => `
       <tr>
         <td style="padding: 8px 4px; border-bottom: 1px solid #e2e8f0; font-family: monospace; font-size: 11px;">${item.codigo}</td>
@@ -512,7 +647,6 @@ export default function App() {
               <p style="margin: 2px 0 0 0; font-size: 11px; color: #64748b; font-weight: bold;">MATERIALES DE CONSTRUCCIÓN & HERRAMIENTAS</p>
               <p style="margin: 4px 0 2px 0; font-size: 11px;"><strong>RNC:</strong> 132-45892-1</p>
               <p style="margin: 2px 0; font-size: 11px;"><strong>Dirección:</strong> La Romana, sector El Tamarindo, No. 43, Rep. Dom.</p>
-              <p style="margin: 2px 0; font-size: 11px;"><strong>Teléfono:</strong> +1 (849) 632-2741</p>
             </td>
             <td style="vertical-align: top; width: 35%; border: none;">
               <div class="invoice-box">
@@ -636,6 +770,11 @@ export default function App() {
     triggerAlerta(`Factura ${numFactura} registrada satisfactoriamente.`);
   };
 
+  const productosFiltrados = productos.filter(p =>
+    p.nombre.toLowerCase().includes(busquedaProd.toLowerCase()) ||
+    p.codigo.toLowerCase().includes(busquedaProd.toLowerCase())
+  );
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
@@ -719,6 +858,7 @@ export default function App() {
         </div>
       )}
 
+      {/* SIDEBAR DE NAVEGACIÓN MODULAR */}
       <aside className="w-72 bg-slate-900 text-slate-200 flex flex-col justify-between p-5 flex-shrink-0 shadow-xl">
         <div>
           <div className="flex items-center gap-3.5 px-2 py-3 mb-6 border-b border-slate-800 pb-5">
@@ -739,17 +879,55 @@ export default function App() {
 
           <div className="space-y-6">
             <div>
-              <p className="text-[10px] font-bold text-slate-500 px-3 uppercase tracking-wider mb-2.5">Panel de Control</p>
+              <p className="text-[10px] font-bold text-slate-500 px-3 uppercase tracking-wider mb-2.5">Principal</p>
               <button 
                 onClick={() => setActiveTab('inicio')}
                 className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-xs rounded-lg font-semibold transition ${activeTab === 'inicio' ? 'bg-orange-600 text-white shadow-sm' : 'text-slate-300 hover:bg-slate-800'}`}
               >
-                <Home className="w-4 h-4" /> Inicio
+                <Home className="w-4 h-4" /> Panel General
               </button>
             </div>
 
             <div>
-              <p className="text-[10px] font-bold text-slate-500 px-3 uppercase tracking-wider mb-2.5">Operaciones</p>
+              <p className="text-[10px] font-bold text-slate-500 px-3 uppercase tracking-wider mb-2.5">Inventario & Catálogo</p>
+              <nav className="space-y-2">
+                <button 
+                  onClick={() => setActiveTab('productos')}
+                  className={`w-full flex items-center justify-between px-3.5 py-2.5 text-xs rounded-lg font-medium transition ${activeTab === 'productos' ? 'bg-orange-600 text-white shadow-sm' : 'text-slate-300 hover:bg-slate-800'}`}
+                >
+                  <div className="flex items-center gap-3">
+                    <Package className="w-4 h-4" /> Gestión de Productos
+                  </div>
+                  <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full font-bold">
+                    {productos.length}
+                  </span>
+                </button>
+
+                <button 
+                  onClick={() => setActiveTab('reorden')}
+                  className={`w-full flex items-center justify-between px-3.5 py-2.5 text-xs rounded-lg font-medium transition ${activeTab === 'reorden' ? 'bg-orange-600 text-white shadow-sm' : 'text-slate-300 hover:bg-slate-800'}`}
+                >
+                  <div className="flex items-center gap-3">
+                    <AlertTriangle className={`w-4 h-4 ${activeTab === 'reorden' ? 'text-white' : 'text-amber-400'}`} /> Alertas Reorden (ROP/SS)
+                  </div>
+                  {productosEnAlerta.length > 0 && (
+                    <span className="bg-amber-500 text-slate-950 text-[10px] px-2 py-0.5 rounded-full font-black">
+                      {productosEnAlerta.length}
+                    </span>
+                  )}
+                </button>
+
+                <button 
+                  onClick={() => setActiveTab('movimientos')}
+                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-xs rounded-lg font-medium transition ${activeTab === 'movimientos' ? 'bg-orange-600 text-white shadow-sm' : 'text-slate-300 hover:bg-slate-800'}`}
+                >
+                  <ArrowLeftRight className="w-4 h-4" /> Historial de Movimientos
+                </button>
+              </nav>
+            </div>
+
+            <div>
+              <p className="text-[10px] font-bold text-slate-500 px-3 uppercase tracking-wider mb-2.5">Ventas & Caja</p>
               <nav className="space-y-2">
                 <button 
                   onClick={() => setActiveTab('pos')}
@@ -781,44 +959,12 @@ export default function App() {
                     {cajaAbierta ? 'Abierta' : 'Cerrada'}
                   </span>
                 </button>
-
-                <button 
-                  onClick={() => setActiveTab('movimientos')}
-                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-xs rounded-lg font-medium transition ${activeTab === 'movimientos' ? 'bg-orange-600 text-white shadow-sm' : 'text-slate-300 hover:bg-slate-800'}`}
-                >
-                  <ArrowLeftRight className="w-4 h-4" /> Historial de Movimientos
-                </button>
-              </nav>
-            </div>
-
-            <div>
-              <p className="text-[10px] font-bold text-slate-500 px-3 uppercase tracking-wider mb-2.5">Monitoreo de Stock</p>
-              <nav className="space-y-2">
-                <button 
-                  onClick={() => setActiveTab('inicio')}
-                  className="w-full flex items-center justify-between px-3.5 py-2.5 text-xs rounded-lg font-medium transition text-slate-300 hover:bg-slate-800"
-                >
-                  <div className="flex items-center gap-3">
-                    <AlertTriangle className="w-4 h-4 text-amber-400" /> Punto de Reorden
-                  </div>
-                  {productosEnAlerta.length > 0 && (
-                    <span className="bg-amber-500 text-slate-950 text-[10px] px-2 py-0.5 rounded-full font-black">
-                      {productosEnAlerta.length}
-                    </span>
-                  )}
-                </button>
               </nav>
             </div>
           </div>
         </div>
 
-        <div className="pt-4 border-t border-slate-800 space-y-2">
-          <button 
-            onClick={resetearDemo}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs text-slate-400 hover:text-white bg-slate-800/80 hover:bg-slate-800 rounded-lg transition font-medium border border-slate-700/60"
-          >
-            <RotateCcw className="w-3.5 h-3.5" /> Restablecer Demostración
-          </button>
+        <div className="pt-4 border-t border-slate-800">
           <button 
             onClick={handleLogout}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs text-rose-400 hover:text-white hover:bg-rose-600/20 rounded-lg transition font-medium border border-rose-900/40"
@@ -828,6 +974,7 @@ export default function App() {
         </div>
       </aside>
 
+      {/* CONTENIDO PRINCIPAL */}
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
         <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between flex-shrink-0 shadow-sm">
           <div>
@@ -835,14 +982,15 @@ export default function App() {
               Ferretería Ramos • La Romana
             </span>
             <h2 className="text-base font-extrabold text-slate-800 tracking-tight mt-0.5">
-              {activeTab === 'inicio' && 'Panel de Control de Inventario & Reorden'}
+              {activeTab === 'inicio' && 'Resumen Ejecutivo & Indicadores Operativos'}
+              {activeTab === 'productos' && 'Gestión del Catálogo de Materiales'}
+              {activeTab === 'reorden' && 'Control Matemático de Punto de Reorden (ROP) & Stock de Seguridad (SS)'}
               {activeTab === 'pos' && 'Punto de Venta / Facturación de Mostrador'}
               {activeTab === 'caja' && 'Gestión y Conciliación de Turnos de Caja'}
-              {activeTab === 'movimientos' && 'Kárdex / Historial de Movimientos'}
+              {activeTab === 'movimientos' && 'Kárdex / Auditoría de Entradas y Salidas'}
             </h2>
           </div>
           <div className="flex items-center gap-4">
-            <span className="text-xs text-slate-500 font-medium hidden sm:inline">+1 (849) 632-2741</span>
             <div className="flex items-center gap-2.5 pl-4 border-l border-slate-200">
               <div className="w-8 h-8 rounded-full bg-slate-900 text-orange-400 font-bold text-xs flex items-center justify-center">
                 FR
@@ -855,6 +1003,7 @@ export default function App() {
           </div>
         </header>
 
+        {/* MÓDULO 1: PANEL GENERAL (INICIO) */}
         {activeTab === 'inicio' && (
           <div className="p-8 space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -869,7 +1018,7 @@ export default function App() {
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:border-orange-200 transition">
                 <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Facturas Emitidas</p>
                 <h3 className="text-2xl font-black text-slate-900 mt-1">{facturasHoy}</h3>
-                <p className="text-[11px] text-slate-500 mt-2 font-medium">Transacciones procesadas</p>
+                <p className="text-[11px] text-slate-500 mt-2 font-medium">Comprobantes procesados</p>
               </div>
 
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:border-orange-200 transition">
@@ -877,31 +1026,40 @@ export default function App() {
                 <h3 className="text-2xl font-black text-slate-900 mt-1">
                   RD$ {productos.reduce((acc, p) => acc + (p.existencia * p.precio), 0).toLocaleString('es-DO', { minimumFractionDigits: 2 })}
                 </h3>
-                <p className="text-[11px] text-slate-400 mt-2">{productos.length} materiales en catálogo</p>
+                <p className="text-[11px] text-slate-400 mt-2">{productos.length} materiales activos</p>
               </div>
 
-              <div className={`p-5 rounded-xl border shadow-sm transition ${productosEnAlerta.length > 0 ? 'bg-orange-50 border-orange-300' : 'bg-white border-slate-200'}`}>
-                <p className="text-xs text-orange-700 font-bold uppercase tracking-wider">Productos por Pedir</p>
+              <div 
+                onClick={() => setActiveTab('reorden')}
+                className={`cursor-pointer p-5 rounded-xl border shadow-sm transition ${productosEnAlerta.length > 0 ? 'bg-orange-50 border-orange-300 hover:bg-orange-100/70' : 'bg-white border-slate-200'}`}
+              >
+                <p className="text-xs text-orange-700 font-bold uppercase tracking-wider">Alertas de Reorden</p>
                 <h3 className="text-2xl font-black text-orange-600 mt-1">{productosEnAlerta.length}</h3>
-                <p className="text-[11px] text-orange-800/80 mt-2 font-semibold">Bajo el Punto de Reorden</p>
+                <p className="text-[11px] text-orange-800/80 mt-2 font-semibold underline">Clic para gestionar reposición →</p>
               </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2 mb-4">
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                      <Boxes className="w-4 h-4 text-orange-600" /> Monitoreo de Existencias & Demanda
-                    </h4>
-                  </div>
-                  <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full self-start">
-                    Sincronización en Tiempo Real
-                  </span>
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <Boxes className="w-4 h-4 text-orange-600" /> Estado General de Existencias
+                  </h4>
+                  <button
+                    onClick={() => setActiveTab('productos')}
+                    className="text-[11px] font-bold text-orange-600 hover:underline"
+                  >
+                    Administrar catálogo →
+                  </button>
                 </div>
 
                 <div className="space-y-4">
                   {productos.map((item) => {
+                    const { estado, badgeClass } = evaluarEstadoInventario(
+                      item.existencia,
+                      item.ptoReorden,
+                      item.stockSeguridad
+                    );
                     const requiereCompra = item.existencia <= item.ptoReorden;
                     const stockTotal = item.existencia + item.salidasHoy;
                     const tasaSalida = stockTotal > 0 ? Math.round((item.salidasHoy / stockTotal) * 100) : 0;
@@ -917,25 +1075,13 @@ export default function App() {
                               <span className="font-bold text-xs text-slate-900">{item.nombre}</span>
                             </div>
                             <span className="text-[11px] text-slate-500 mt-0.5 block">
-                              Salidas registradas: <strong className="text-slate-800">{item.salidasHoy}</strong> unidades | Existencia disponible: <strong className={requiereCompra ? 'text-orange-600 font-extrabold' : 'text-slate-800'}>{item.existencia}</strong>
+                              Salidas hoy: <strong className="text-slate-800">{item.salidasHoy}</strong> | Existencia: <strong className={requiereCompra ? 'text-orange-600 font-extrabold' : 'text-slate-800'}>{item.existencia}</strong>
                             </span>
                           </div>
 
-                          <div>
-                            {requiereCompra ? (
-                              <span className="inline-flex items-center gap-1 bg-rose-100 text-rose-800 text-[10px] font-black px-2 py-1 rounded">
-                                <AlertTriangle className="w-3 h-3 text-rose-600" /> Pedir {item.lote}
-                              </span>
-                            ) : item.existencia <= item.ptoReorden * 1.3 ? (
-                              <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-1 rounded">
-                                Stock Moderado
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-1 rounded">
-                                Stock Óptimo
-                              </span>
-                            )}
-                          </div>
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full ${badgeClass}`}>
+                            {estado}
+                          </span>
                         </div>
 
                         <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
@@ -949,8 +1095,8 @@ export default function App() {
                           ></div>
                         </div>
                         <div className="flex justify-between text-[10px] text-slate-400 mt-1">
-                          <span>Índice de rotación: {tasaSalida}%</span>
-                          <span>Punto Reorden: {item.ptoReorden}</span>
+                          <span>Rotación diaria: {tasaSalida}%</span>
+                          <span>SS: {item.stockSeguridad} | ROP: {item.ptoReorden}</span>
                         </div>
                       </div>
                     );
@@ -962,14 +1108,19 @@ export default function App() {
                 <div>
                   <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
                     <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Top Ventas por Monto</h4>
-                    <span className="text-[10px] text-orange-600 font-bold bg-orange-50 px-2 py-0.5 rounded">Ferretería Ramos</span>
+                    <span className="text-[10px] text-orange-600 font-bold bg-orange-50 px-2 py-0.5 rounded">Turno Actual</span>
                   </div>
                   <div className="space-y-3.5">
                     {ventasDiaTotal === 0 ? (
                       <div className="text-center py-12 text-slate-400">
                         <Package className="w-8 h-8 mx-auto opacity-30 mb-2" />
                         <p className="text-xs">Sin ventas registradas en el turno actual</p>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Se computarán automáticamente al emitir facturas</p>
+                        <button
+                          onClick={() => setActiveTab('pos')}
+                          className="mt-3 text-xs bg-orange-600 hover:bg-orange-700 text-white font-bold px-3 py-1.5 rounded-lg transition"
+                        >
+                          Ir a Facturar (POS)
+                        </button>
                       </div>
                     ) : (
                       [...productos]
@@ -995,9 +1146,126 @@ export default function App() {
                 </div>
 
                 <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mt-4 text-[11px] text-slate-600">
-                  <span className="font-bold text-slate-800 block mb-0.5">Control Centralizado:</span>
-                  Toda salida por mostrador o reabastecimiento actualiza automáticamente las existencias disponibles y el kárdex general.
+                  <span className="font-bold text-slate-800 block mb-0.5">Arquitectura Sincronizada:</span>
+                  Cada movimiento en POS, Kárdex o Gestión de Productos actualiza la base de datos en tiempo real.
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MÓDULO 2: GESTIÓN DE PRODUCTOS (CATÁLOGO CRUD) */}
+        {activeTab === 'productos' && (
+          <div className="p-8 space-y-6">
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-black text-slate-900">Catálogo General de Materiales</h3>
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="text"
+                  placeholder="Buscar código o nombre..."
+                  value={busquedaProd}
+                  onChange={(e) => setBusquedaProd(e.target.value)}
+                  className="px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:outline-none focus:ring-1 focus:ring-orange-500"
+                />
+                <button
+                  onClick={abrirModalNuevoProducto}
+                  className="bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs px-3.5 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition"
+                >
+                  <PlusCircle className="w-4 h-4" /> Nuevo Producto
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-100 text-slate-600 border-b border-slate-200 uppercase text-[10px] font-bold tracking-wider">
+                    <tr>
+                      <th className="py-3.5 px-4">Código</th>
+                      <th className="py-3.5 px-4">Material / Descripción</th>
+                      <th className="py-3.5 px-4 text-right">Precio Unit.</th>
+                      <th className="py-3.5 px-4 text-center">Existencia</th>
+                      <th className="py-3.5 px-4 text-center">Lote Pedido</th>
+                      <th className="py-3.5 px-4 text-center">Movimientos Rápidos</th>
+                      <th className="py-3.5 px-4 text-center">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-slate-700">
+                    {productosFiltrados.map((prod) => (
+                      <tr key={prod.codigo} className="hover:bg-slate-50 transition">
+                        <td className="py-3.5 px-4 font-mono font-bold text-slate-600">{prod.codigo}</td>
+                        <td className="py-3.5 px-4 font-bold text-slate-900">{prod.nombre}</td>
+                        <td className="py-3.5 px-4 text-right font-semibold text-slate-800">
+                          RD$ {prod.precio.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3.5 px-4 text-center font-black text-slate-900 text-sm">
+                          {prod.existencia}
+                        </td>
+                        <td className="py-3.5 px-4 text-center text-slate-500 font-medium">
+                          {prod.lote}
+                        </td>
+                        <td className="py-3.5 px-4 text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button 
+                              onClick={() => descontarStock(prod.codigo, 5)}
+                              className="px-2 py-1 bg-white border border-slate-300 hover:border-orange-500 hover:text-orange-600 text-slate-700 rounded-md font-bold flex items-center gap-1 transition text-[11px]"
+                            >
+                              <MinusCircle className="w-3 h-3 text-orange-500" /> -5
+                            </button>
+                            <button 
+                              onClick={() => reabastecerStock(prod.codigo, 25)}
+                              className="px-2 py-1 bg-slate-900 hover:bg-orange-600 text-white rounded-md font-bold flex items-center gap-1 transition text-[11px]"
+                            >
+                              <PlusCircle className="w-3 h-3 text-amber-400" /> +25
+                            </button>
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4 text-center">
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              onClick={() => abrirModalEditarProducto(prod)}
+                              className="px-2.5 py-1 text-[11px] font-bold text-blue-600 hover:bg-blue-50 border border-blue-200 rounded-md transition"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              onClick={() => eliminarProductoNube(prod.codigo, prod.nombre)}
+                              title="Eliminar producto"
+                              className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MÓDULO 3: ALERTAS DE REORDEN & CÁLCULO ROP / SS */}
+        {activeTab === 'reorden' && (
+          <div className="p-8 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-amber-50 p-5 rounded-xl border border-amber-300 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-bold text-amber-800 uppercase">En Punto de Reorden (ROP)</p>
+                  <AlertTriangle className="w-5 h-5 text-amber-600" />
+                </div>
+                <h3 className="text-3xl font-black text-amber-700 mt-1">{productosEnAlerta.length}</h3>
+              </div>
+
+              <div className="bg-rose-50 p-5 rounded-xl border border-rose-300 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-bold text-rose-800 uppercase">Nivel Crítico (Bajo SS)</p>
+                  <AlertTriangle className="w-5 h-5 text-rose-600" />
+                </div>
+                <h3 className="text-3xl font-black text-rose-700 mt-1">{productosEnCritico.length}</h3>
               </div>
             </div>
 
@@ -1005,19 +1273,8 @@ export default function App() {
               <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                 <div>
                   <h4 className="text-sm font-black text-slate-900 tracking-tight">
-                    Punto de Reorden & Control de Existencias
+                    Matriz de Cálculo Automático de Punto de Reorden (ROP) y Stock de Seguridad (SS)
                   </h4>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Cálculo preventivo: Dispara notificación automática cuando <code className="text-orange-600 font-semibold">Existencia ≤ Punto de Reorden</code>
-                  </p>
-                </div>
-                <div>
-                  <button 
-                    onClick={() => setActiveTab('pos')}
-                    className="text-xs bg-orange-600 hover:bg-orange-700 text-white font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition shadow-sm"
-                  >
-                    <ShoppingCart className="w-3.5 h-3.5" /> Ir al POS
-                  </button>
                 </div>
               </div>
 
@@ -1026,64 +1283,50 @@ export default function App() {
                   <thead className="bg-slate-100 text-slate-600 border-b border-slate-200 uppercase text-[10px] font-bold tracking-wider">
                     <tr>
                       <th className="py-3.5 px-4">Cód.</th>
-                      <th className="py-3.5 px-4">Material / Producto</th>
-                      <th className="py-3.5 px-4 text-center">Nivel de Stock</th>
-                      <th className="py-3.5 px-4 text-center">Pto. Reorden</th>
-                      <th className="py-3.5 px-4">Lote Sugerido</th>
-                      <th className="py-3.5 px-4 text-center">Acciones Operativas</th>
+                      <th className="py-3.5 px-4">Material</th>
+                      <th className="py-3.5 px-4 text-center">Demanda (d/día)</th>
+                      <th className="py-3.5 px-4 text-center">Lead Time (L)</th>
+                      <th className="py-3.5 px-4 text-right">Stock Seg. (SS)</th>
+                      <th className="py-3.5 px-4 text-right">Pto. Reorden (ROP)</th>
+                      <th className="py-3.5 px-4 text-center">Existencia Actual</th>
+                      <th className="py-3.5 px-4 text-center">Estado</th>
+                      <th className="py-3.5 px-4 text-center">Reabastecer</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700">
                     {productos.map((prod) => {
-                      const esCritico = prod.existencia <= prod.ptoReorden;
-                      const porcentaje = Math.min(100, Math.round((prod.existencia / (prod.ptoReorden * 1.5)) * 100));
+                      const { estado, badgeClass } = evaluarEstadoInventario(
+                        prod.existencia,
+                        prod.ptoReorden,
+                        prod.stockSeguridad
+                      );
+                      const esBajoPto = prod.existencia <= prod.ptoReorden;
 
                       return (
-                        <tr key={prod.codigo} className={`hover:bg-slate-50 transition ${esCritico ? 'bg-orange-50/40' : ''}`}>
+                        <tr key={prod.codigo} className={`hover:bg-slate-50 transition ${esBajoPto ? 'bg-amber-50/40' : ''}`}>
                           <td className="py-3.5 px-4 font-mono font-bold text-slate-500">{prod.codigo}</td>
-                          <td className="py-3.5 px-4 font-bold text-slate-900">
-                            {prod.nombre}
-                            <span className="block text-[10px] font-normal text-slate-400">RD$ {prod.precio.toLocaleString()} c/u</span>
-                          </td>
-                          
-                          <td className="py-3.5 px-4">
-                            <div className="flex items-center justify-center gap-3">
-                              <span className={`font-black w-8 text-right text-xs ${esCritico ? 'text-orange-600 font-extrabold' : 'text-slate-800'}`}>
-                                {prod.existencia}
-                              </span>
-                              <div className="w-24 bg-slate-200 h-2.5 rounded-full overflow-hidden">
-                                <div 
-                                  className={`h-full rounded-full transition-all duration-300 ${esCritico ? 'bg-gradient-to-r from-orange-600 to-amber-500' : 'bg-emerald-500'}`}
-                                  style={{ width: `${porcentaje}%` }}
-                                ></div>
-                              </div>
-                            </div>
-                          </td>
-
-                          <td className="py-3.5 px-4 text-center font-bold text-slate-600 text-xs">
-                            {prod.ptoReorden}
-                          </td>
-                          <td className="py-3.5 px-4 font-semibold text-slate-600">
-                            {prod.lote}
-                          </td>
-
+                          <td className="py-3.5 px-4 font-bold text-slate-900">{prod.nombre}</td>
+                          <td className="py-3.5 px-4 text-center font-medium text-slate-600">{prod.consumoDiario} u.</td>
+                          <td className="py-3.5 px-4 text-center font-medium text-slate-600">{prod.leadTimeDias} días</td>
+                          <td className="py-3.5 px-4 text-right font-semibold text-slate-600">{prod.stockSeguridad}</td>
+                          <td className="py-3.5 px-4 text-right font-black text-slate-900">{prod.ptoReorden}</td>
                           <td className="py-3.5 px-4 text-center">
-                            <div className="flex items-center justify-center gap-2">
-                              <button 
-                                onClick={() => descontarStock(prod.codigo, 5)}
-                                title="Descontar stock"
-                                className="px-2.5 py-1.5 bg-white border border-slate-300 hover:border-orange-500 hover:text-orange-600 text-slate-700 rounded-lg font-bold flex items-center gap-1 transition shadow-sm"
-                              >
-                                <MinusCircle className="w-3.5 h-3.5 text-orange-500" /> Salida (-5)
-                              </button>
-                              <button 
-                                onClick={() => reabastecerStock(prod.codigo, 25)}
-                                title="Ingresar stock de reposición"
-                                className="px-2.5 py-1.5 bg-slate-900 hover:bg-orange-600 text-white rounded-lg font-bold flex items-center gap-1 transition shadow-sm"
-                              >
-                                <PlusCircle className="w-3.5 h-3.5 text-amber-400" /> Entrada (+25)
-                              </button>
-                            </div>
+                            <span className={`font-black text-sm ${esBajoPto ? 'text-orange-600' : 'text-emerald-700'}`}>
+                              {prod.existencia}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            <span className={`inline-flex items-center text-[10px] font-bold px-2.5 py-1 rounded-full ${badgeClass}`}>
+                              {estado}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            <button 
+                              onClick={() => reabastecerStock(prod.codigo, 25)}
+                              className="px-2.5 py-1 bg-slate-900 hover:bg-orange-600 text-white rounded-lg font-bold inline-flex items-center gap-1 transition shadow-sm text-[11px]"
+                            >
+                              <PlusCircle className="w-3.5 h-3.5 text-amber-400" /> Recibir (+25)
+                            </button>
                           </td>
                         </tr>
                       );
@@ -1095,27 +1338,24 @@ export default function App() {
           </div>
         )}
 
+        {/* MÓDULO 4: PUNTO DE VENTA (FACTURACIÓN POS) */}
         {activeTab === 'pos' && (
           <div className="p-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-4">
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900">Catálogo de Materiales</h3>
-                  <p className="text-xs text-slate-500">Selecciona los productos para generar la orden de venta</p>
+                  <h3 className="text-sm font-bold text-slate-900">Catálogo para Facturación</h3>
                 </div>
-                <button 
-                  onClick={() => setActiveTab('inicio')}
-                  className="text-xs font-semibold text-orange-600 hover:underline"
-                >
-                  ← Volver al Inventario
-                </button>
+                <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
+                  ITBIS: 18%
+                </span>
               </div>
 
               {!cajaAbierta && (
                 <div className="bg-amber-50 border border-amber-300 text-amber-800 p-4 rounded-xl flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2 font-bold">
                     <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-                    <span>La caja está actualmente CERRADA. Debe iniciar un turno para poder procesar cobros.</span>
+                    <span>La caja está CERRADA. Debe iniciar un turno antes de cobrar.</span>
                   </div>
                   <button 
                     onClick={() => setActiveTab('caja')}
@@ -1157,7 +1397,7 @@ export default function App() {
 
                       <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
                         <span className="text-sm font-black text-orange-600">
-                          RD$ {p.precio.toLocaleString()}
+                          RD$ {p.precio.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
                         </span>
                         <button 
                           disabled={sinStock || !cajaAbierta}
@@ -1299,6 +1539,7 @@ export default function App() {
           </div>
         )}
 
+        {/* MÓDULO 5: CIERRE DE CAJA */}
         {activeTab === 'caja' && (
           <div className="p-8 space-y-6">
             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -1511,6 +1752,7 @@ export default function App() {
           </div>
         )}
 
+        {/* MÓDULO 6: HISTORIAL DE MOVIMIENTOS (KÁRDEX) */}
         {activeTab === 'movimientos' && (
           <div className="p-8 space-y-6">
             <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -1519,17 +1761,9 @@ export default function App() {
                   <ArrowLeftRight className="w-5 h-5 text-orange-600" /> Registro de Entradas y Salidas (Kárdex)
                 </h3>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-bold bg-slate-100 border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg">
-                  Total Registros: {movimientos.length}
-                </span>
-                <button 
-                  onClick={() => setActiveTab('inicio')}
-                  className="text-xs font-bold text-orange-600 hover:text-orange-700 border border-orange-200 bg-orange-50 px-3 py-1.5 rounded-lg transition"
-                >
-                  Ir al Inventario
-                </button>
-              </div>
+              <span className="text-xs font-bold bg-slate-100 border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg">
+                Total Registros: {movimientos.length}
+              </span>
             </div>
 
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -1591,6 +1825,141 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* MODAL CREAR / EDITAR PRODUCTO CON CÁLCULO ROP / SS EN VIVO */}
+      {modalProductoOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden">
+            <div className="bg-slate-900 px-6 py-4 flex items-center justify-between text-white">
+              <h3 className="text-sm font-black uppercase tracking-wider">
+                {modoEdicion ? `Editar Material: ${formProd.codigo}` : 'Registrar Nuevo Material'}
+              </h3>
+              <button onClick={() => setModalProductoOpen(false)} className="text-slate-400 hover:text-white font-bold text-sm">
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={guardarProductoNube} className="p-6 space-y-4 text-xs">
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 uppercase mb-1">Código</label>
+                  <input
+                    type="text"
+                    required
+                    disabled={modoEdicion}
+                    placeholder="Ej: CEM-02"
+                    value={formProd.codigo}
+                    onChange={(e) => setFormProd({ ...formProd, codigo: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-mono uppercase disabled:opacity-60"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block font-bold text-slate-700 uppercase mb-1">Nombre del Material</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej: Arena Lavada (Metro Cúbico)"
+                    value={formProd.nombre}
+                    onChange={(e) => setFormProd({ ...formProd, nombre: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 uppercase mb-1">Precio (RD$)</label>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    required
+                    value={formProd.precio}
+                    onChange={(e) => setFormProd({ ...formProd, precio: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 uppercase mb-1">Existencia</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={formProd.existencia}
+                    onChange={(e) => setFormProd({ ...formProd, existencia: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 uppercase mb-1">Lote Sugerido</label>
+                  <input
+                    type="text"
+                    value={formProd.lote}
+                    onChange={(e) => setFormProd({ ...formProd, lote: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg"
+                  />
+                </div>
+              </div>
+
+              <div className="bg-orange-50/70 border border-orange-200 rounded-xl p-4 space-y-3">
+                <p className="font-black text-orange-800 uppercase text-[11px]">
+                  Parámetros de Reabastecimiento (Cálculo Automático ROP y SS)
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Demanda Diaria (d)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="any"
+                      value={formProd.consumoDiario}
+                      onChange={(e) => handleParametroReordenChange('consumoDiario', e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white border border-orange-300 rounded-lg font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Tiempo Entrega Proveedor (L días)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={formProd.leadTimeDias}
+                      onChange={(e) => handleParametroReordenChange('leadTimeDias', e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white border border-orange-300 rounded-lg font-bold"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-orange-200/80">
+                  <div className="bg-white px-3 py-2 rounded-lg border border-orange-200 flex justify-between items-center">
+                    <span className="text-slate-500 font-semibold">Stock Seguridad (SS):</span>
+                    <span className="font-black text-slate-900 text-sm">{formProd.stockSeguridad}</span>
+                  </div>
+                  <div className="bg-white px-3 py-2 rounded-lg border border-orange-200 flex justify-between items-center">
+                    <span className="text-slate-500 font-semibold">Punto Reorden (ROP):</span>
+                    <span className="font-black text-orange-600 text-sm">{formProd.ptoReorden}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModalProductoOpen(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-orange-600 hover:bg-orange-700 text-white font-extrabold rounded-lg shadow-md transition"
+                >
+                  {modoEdicion ? 'Guardar Cambios' : 'Registrar Material'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
