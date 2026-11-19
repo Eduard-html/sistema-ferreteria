@@ -1104,50 +1104,43 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
-                <div>
-                  <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
-                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Top Ventas por Monto</h4>
-                    <span className="text-[10px] text-orange-600 font-bold bg-orange-50 px-2 py-0.5 rounded">Turno Actual</span>
-                  </div>
-                  <div className="space-y-3.5">
-                    {ventasDiaTotal === 0 ? (
-                      <div className="text-center py-12 text-slate-400">
-                        <Package className="w-8 h-8 mx-auto opacity-30 mb-2" />
-                        <p className="text-xs">Sin ventas registradas en el turno actual</p>
-                        <button
-                          onClick={() => setActiveTab('pos')}
-                          className="mt-3 text-xs bg-orange-600 hover:bg-orange-700 text-white font-bold px-3 py-1.5 rounded-lg transition"
-                        >
-                          Ir a Facturar (POS)
-                        </button>
-                      </div>
-                    ) : (
-                      [...productos]
-                        .filter(item => item.salidasHoy > 0)
-                        .sort((a, b) => (b.salidasHoy * b.precio) - (a.salidasHoy * a.precio))
-                        .slice(0, 4)
-                        .map((item, idx) => (
-                          <div key={item.codigo} className="flex items-center justify-between text-xs pb-2 border-b border-slate-100 last:border-0">
-                            <div className="flex items-center gap-2.5">
-                              <span className="text-orange-500 font-black text-sm">{idx + 1}</span>
-                              <div>
-                                <p className="font-bold text-slate-800">{item.nombre}</p>
-                                <p className="text-[10px] text-slate-400">{item.salidasHoy} unidades despachadas</p>
-                              </div>
-                            </div>
-                            <span className="font-bold text-slate-700">
-                              RD$ {(item.salidasHoy * item.precio).toLocaleString('es-DO', { minimumFractionDigits: 2 })}
-                            </span>
-                          </div>
-                        ))
-                    )}
-                  </div>
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col">
+                <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Top Ventas por Monto</h4>
+                  <span className="text-[10px] text-orange-600 font-bold bg-orange-50 px-2 py-0.5 rounded">Turno Actual</span>
                 </div>
-
-                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mt-4 text-[11px] text-slate-600">
-                  <span className="font-bold text-slate-800 block mb-0.5">Arquitectura Sincronizada:</span>
-                  Cada movimiento en POS, Kárdex o Gestión de Productos actualiza la base de datos en tiempo real.
+                <div className="space-y-3.5 flex-1">
+                  {ventasDiaTotal === 0 ? (
+                    <div className="text-center py-12 text-slate-400">
+                      <Package className="w-8 h-8 mx-auto opacity-30 mb-2" />
+                      <p className="text-xs">Sin ventas registradas en el turno actual</p>
+                      <button
+                        onClick={() => setActiveTab('pos')}
+                        className="mt-3 text-xs bg-orange-600 hover:bg-orange-700 text-white font-bold px-3 py-1.5 rounded-lg transition"
+                      >
+                        Ir a Facturar (POS)
+                      </button>
+                    </div>
+                  ) : (
+                    [...productos]
+                      .filter(item => item.salidasHoy > 0)
+                      .sort((a, b) => (b.salidasHoy * b.precio) - (a.salidasHoy * a.precio))
+                      .slice(0, 4)
+                      .map((item, idx) => (
+                        <div key={item.codigo} className="flex items-center justify-between text-xs pb-2 border-b border-slate-100 last:border-0">
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-orange-500 font-black text-sm">{idx + 1}</span>
+                            <div>
+                              <p className="font-bold text-slate-800">{item.nombre}</p>
+                              <p className="text-[10px] text-slate-400">{item.salidasHoy} unidades despachadas</p>
+                            </div>
+                          </div>
+                          <span className="font-bold text-slate-700">
+                            RD$ {(item.salidasHoy * item.precio).toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      ))
+                  )}
                 </div>
               </div>
             </div>
@@ -1469,7 +1462,6 @@ export default function App() {
                   <div className="text-center py-8 text-slate-400">
                     <ShoppingCart className="w-10 h-10 mx-auto stroke-[1.5] mb-2 opacity-40" />
                     <p className="text-xs font-medium">Factura vacía</p>
-                    <p className="text-[11px] mt-1 text-slate-400">Agregue materiales desde el catálogo</p>
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-56 overflow-y-auto pr-1 divide-y divide-slate-100">
